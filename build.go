@@ -24,6 +24,7 @@ import (
 
 var buildCommand = cli.Command{
 	Name:        "build",
+	Usage:       "build an image or export its contents",
 	Description: "build an image using buildkit",
 	Flags: []cli.Flag{
 		cli.StringFlag{
@@ -45,9 +46,8 @@ var buildCommand = cli.Command{
 			Value: ".",
 		},
 		cli.BoolFlag{
-			Name:   "dry",
-			Usage:  "test run the build without any exports",
-			Hidden: true,
+			Name:  "dry",
+			Usage: "test run the build without any exports",
 		},
 		cli.BoolFlag{
 			Name:  "local",
