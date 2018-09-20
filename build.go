@@ -60,17 +60,11 @@ var buildCommand = cli.Command{
 		},
 	},
 	Action: func(clix *cli.Context) error {
-		if err := build(clix); err != nil {
-			return err
-		}
-		if clix.Bool("push") {
-			panic("push not supported")
-		}
-		return nil
+		return build(clix)
 	},
 }
 
-func read(r io.Reader, clicontext *cli.Context) (*llb.Definition, error) {
+func read(r io.Reader, clix *cli.Context) (*llb.Definition, error) {
 	def, err := llb.ReadFrom(r)
 	if err != nil {
 		return nil, errors.Wrap(err, "failed to parse input")
@@ -78,16 +72,16 @@ func read(r io.Reader, clicontext *cli.Context) (*llb.Definition, error) {
 	return def, nil
 }
 
-func build(clicontext *cli.Context) error {
-	c, err := resolveClient(clicontext)
+func build(clix *cli.Context) error {
+	c, err := resolveClient(clix)
 	if err != nil {
 		return err
 	}
 	ch := make(chan *client.SolveStatus)
-	eg, ctx := errgroup.WithContext(commandContext(clicontext))
+	eg, ctx := errgroup.WithContext(commandContext(clix))
 
 	atters := make(map[string]string)
-	for _, a := range clicontext.StringSlice("arg") {
+	for _, a := range clix.StringSlice("arg") {
 		kv := strings.SplitN(a, "=", 2)
 		if len(kv) != 2 {
 			return errors.Errorf("invalid build-arg value %s", a)
@@ -102,17 +96,20 @@ func build(clicontext *cli.Context) error {
 		Session:       []session.Attachable{authprovider.NewDockerAuthProvider()},
 	}
 	switch {
-	case clicontext.Bool("dry"):
+	case clix.Bool("dry"):
 		solveOpt.Exporter = ""
-	case clicontext.Bool("local"):
+	case clix.Bool("local"):
 		solveOpt.Exporter = "local"
 		solveOpt.ExporterAttrs["output"] = "."
 	default:
-		ref := clicontext.String("ref")
+		ref := clix.String("ref")
 		if ref == "" {
 			return errors.New("ref is required when exporting image")
 		}
 		solveOpt.ExporterAttrs["name"] = ref
+		if clix.Bool("push") {
+			solveOpt.ExporterAttrs["push"] = "true"
+		}
 	}
 	solveOpt.ExporterOutput, solveOpt.ExporterOutputDir, err = resolveExporterOutput(solveOpt.Exporter, solveOpt.ExporterAttrs["output"])
 	if err != nil {
@@ -123,8 +120,8 @@ func build(clicontext *cli.Context) error {
 	}
 	solveOpt.ExportCacheAttrs = map[string]string{"mode": "min"}
 	solveOpt.LocalDirs, err = attrMap(
-		fmt.Sprintf("context=%s", clicontext.String("context")),
-		fmt.Sprintf("dockerfile=%s", clicontext.String("dockerfile")),
+		fmt.Sprintf("context=%s", clix.String("context")),
+		fmt.Sprintf("dockerfile=%s", clix.String("dockerfile")),
 	)
 	if err != nil {
 		return errors.Wrap(err, "invalid local")
@@ -209,7 +206,7 @@ func resolveClient(c *cli.Context) (*client.Client, error) {
 	ctx := commandContext(c)
 	ctx, cancel := context.WithTimeout(ctx, 5*time.Second)
 	defer cancel()
-	return client.New(ctx, buildkitProto(c.String("address")), opts...)
+	return client.New(ctx, buildkitProto(c.GlobalString("buildkit")), opts...)
 }
 
 func buildkitProto(s string) string {

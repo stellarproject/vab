@@ -12,7 +12,7 @@ func main() {
 	app := cli.NewApp()
 	app.Name = "vab"
 	app.Version = "1"
-	app.Usage = "run containers like a ross"
+	app.Usage = "container assembly builder"
 	app.Description = `
         _..-.._
      .'  _   _  ` + "`" + `.
