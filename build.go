@@ -11,115 +11,62 @@ import (
 	"time"
 
 	"github.com/containerd/console"
-	"github.com/crosbymichael/boss/api/v1"
 	"github.com/moby/buildkit/client"
 	"github.com/moby/buildkit/client/llb"
 	"github.com/moby/buildkit/session"
 	"github.com/moby/buildkit/session/auth/authprovider"
 	"github.com/moby/buildkit/util/progress/progressui"
-	opentracing "github.com/opentracing/opentracing-go"
 	"github.com/pkg/errors"
 	"github.com/sirupsen/logrus"
 	"github.com/urfave/cli"
 	"golang.org/x/sync/errgroup"
 )
 
-const BossDefaultBuildkitAddress = "127.0.0.1:9500"
-
-//  sudo buildctl build --frontend=dockerfile.v0 --local context=. --local dockerfile=. --exporter=image --exporter-opt name=registry2
 var buildCommand = cli.Command{
-	Name:  "build",
-	Usage: "build",
+	Name:        "build",
+	Description: "build an image using buildkit",
 	Flags: []cli.Flag{
 		cli.StringFlag{
-			Name:  "name",
-			Usage: "Name of the image to create",
-		},
-		cli.StringFlag{
-			Name:  "export-cache",
-			Usage: "Reference to export build cache to",
-		},
-		cli.StringSliceFlag{
-			Name:  "export-cache-opt",
-			Usage: "Define custom options for cache exporting",
-		},
-		cli.StringSliceFlag{
-			Name:  "import-cache",
-			Usage: "Reference to import build cache from",
+			Name:  "ref,r",
+			Usage: "ref of the image",
 		},
 		cli.BoolFlag{
-			Name:  "push",
-			Usage: "push the resulting image",
+			Name:  "push,p",
+			Usage: "push the final image",
 		},
 		cli.StringFlag{
 			Name:  "dockerfile,d",
-			Usage: "set the specific dockerfile",
+			Usage: "set the path to a Dockerfile",
 			Value: ".",
 		},
 		cli.StringFlag{
-			Name:  "context",
-			Usage: "set the specific context path",
+			Name:  "context,c",
+			Usage: "set the context path",
 			Value: ".",
-		},
-		cli.StringFlag{
-			Name:   "address",
-			Usage:  "buildkitd address",
-			Value:  BossDefaultBuildkitAddress,
-			EnvVar: "BOSS_BUILDKIT",
 		},
 		cli.BoolFlag{
-			Name:   "no-export",
-			Usage:  "don't export the build",
+			Name:   "dry",
+			Usage:  "test run the build without any exports",
 			Hidden: true,
 		},
-		cli.StringFlag{
-			Name:  "exporter",
-			Usage: "set the buildkit exporter",
-			Value: "image",
+		cli.BoolFlag{
+			Name:  "local",
+			Usage: "export the build results to the local directory",
 		},
 		cli.StringSliceFlag{
-			Name:  "build-arg",
-			Usage: "set build args",
+			Name:  "arg,a",
+			Usage: "set build arguments",
 			Value: &cli.StringSlice{},
 		},
-	},
-	Subcommands: []cli.Command{
-		pushBuildCommand,
 	},
 	Action: func(clix *cli.Context) error {
 		if err := build(clix); err != nil {
 			return err
 		}
-		if !clix.Bool("push") {
-			return nil
+		if clix.Bool("push") {
+			panic("push not supported")
 		}
-		ref := clix.String("name")
-		agent, err := Agent(clix)
-		if err != nil {
-			return err
-		}
-		defer agent.Close()
-		_, err = agent.PushBuild(Context(), &v1.PushBuildRequest{
-			Ref: ref,
-		})
-		return err
-	},
-}
-
-var pushBuildCommand = cli.Command{
-	Name:  "push",
-	Usage: "push a build using the agent",
-	Action: func(clix *cli.Context) error {
-		agent, err := Agent(clix)
-		if err != nil {
-			return err
-		}
-		defer agent.Close()
-		_, err = agent.Push(Context(), &v1.PushRequest{
-			Ref:   clix.Args().First(),
-			Build: true,
-		})
-		return err
+		return nil
 	},
 }
 
@@ -136,62 +83,45 @@ func build(clicontext *cli.Context) error {
 	if err != nil {
 		return err
 	}
-
 	ch := make(chan *client.SolveStatus)
 	eg, ctx := errgroup.WithContext(commandContext(clicontext))
 
-	exporter := clicontext.String("exporter")
-	if clicontext.Bool("no-export") {
-		exporter = ""
-	}
 	atters := make(map[string]string)
-
-	for _, a := range clicontext.StringSlice("build-arg") {
+	for _, a := range clicontext.StringSlice("arg") {
 		kv := strings.SplitN(a, "=", 2)
 		if len(kv) != 2 {
 			return errors.Errorf("invalid build-arg value %s", a)
 		}
 		atters["build-arg:"+kv[0]] = kv[1]
 	}
-
 	solveOpt := client.SolveOpt{
-		Exporter:      exporter,
+		Exporter:      "image",
 		ExporterAttrs: make(map[string]string),
-		// LocalDirs is set later
 		Frontend:      "dockerfile.v0",
 		FrontendAttrs: atters,
-		ExportCache:   clicontext.String("export-cache"),
-		ImportCache:   clicontext.StringSlice("import-cache"),
 		Session:       []session.Attachable{authprovider.NewDockerAuthProvider()},
 	}
-	if !clicontext.Bool("no-export") {
-		name := clicontext.String("name")
-		if solveOpt.Exporter == "local" {
-			solveOpt.ExporterAttrs["output"] = "."
-		} else {
-			if name == "" {
-				return errors.New("name is required when exporting")
-			}
-			solveOpt.ExporterAttrs["name"] = name
+	switch {
+	case clicontext.Bool("dry"):
+		solveOpt.Exporter = ""
+	case clicontext.Bool("local"):
+		solveOpt.Exporter = "local"
+		solveOpt.ExporterAttrs["output"] = "."
+	default:
+		ref := clicontext.String("ref")
+		if ref == "" {
+			return errors.New("ref is required when exporting image")
 		}
-		solveOpt.ExporterOutput, solveOpt.ExporterOutputDir, err = resolveExporterOutput(solveOpt.Exporter, solveOpt.ExporterAttrs["output"])
-		if err != nil {
-			return errors.Wrap(err, "invalid exporter-opt: output")
-		}
-		if solveOpt.ExporterOutput != nil || solveOpt.ExporterOutputDir != "" {
-			delete(solveOpt.ExporterAttrs, "output")
-		}
+		solveOpt.ExporterAttrs["name"] = ref
 	}
-
-	exportCacheAttrs, err := attrMap(clicontext.StringSlice("export-cache-opt")...)
+	solveOpt.ExporterOutput, solveOpt.ExporterOutputDir, err = resolveExporterOutput(solveOpt.Exporter, solveOpt.ExporterAttrs["output"])
 	if err != nil {
-		return errors.Wrap(err, "invalid export-cache-opt")
+		return errors.Wrap(err, "invalid exporter-opt: output")
 	}
-	if len(exportCacheAttrs) == 0 {
-		exportCacheAttrs = map[string]string{"mode": "min"}
+	if solveOpt.ExporterOutput != nil || solveOpt.ExporterOutputDir != "" {
+		delete(solveOpt.ExporterAttrs, "output")
 	}
-	solveOpt.ExportCacheAttrs = exportCacheAttrs
-
+	solveOpt.ExportCacheAttrs = map[string]string{"mode": "min"}
 	solveOpt.LocalDirs, err = attrMap(
 		fmt.Sprintf("context=%s", clicontext.String("context")),
 		fmt.Sprintf("dockerfile=%s", clicontext.String("dockerfile")),
@@ -199,7 +129,6 @@ func build(clicontext *cli.Context) error {
 	if err != nil {
 		return errors.Wrap(err, "invalid local")
 	}
-
 	var def *llb.Definition
 	eg.Go(func() error {
 		resp, err := c.Solve(ctx, def, solveOpt, ch)
@@ -278,9 +207,6 @@ func commandContext(c *cli.Context) context.Context {
 func resolveClient(c *cli.Context) (*client.Client, error) {
 	opts := []client.ClientOpt{client.WithBlock()}
 	ctx := commandContext(c)
-	if span := opentracing.SpanFromContext(ctx); span != nil {
-		opts = append(opts, client.WithTracer(span.Tracer()))
-	}
 	ctx, cancel := context.WithTimeout(ctx, 5*time.Second)
 	defer cancel()
 	return client.New(ctx, buildkitProto(c.String("address")), opts...)

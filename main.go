@@ -46,7 +46,7 @@ container assembly builder`
 		cli.StringFlag{
 			Name:   "buildkit,b",
 			Usage:  "buildkit address",
-			Value:  "127.0.0.1:9200",
+			Value:  "127.0.0.1:9500",
 			EnvVar: "BUILDKIT",
 		},
 	}
