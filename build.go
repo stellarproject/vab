@@ -77,6 +77,7 @@ func build(clix *cli.Context) error {
 	if err != nil {
 		return err
 	}
+	defer c.Close()
 	ch := make(chan *client.SolveStatus)
 	eg, ctx := errgroup.WithContext(commandContext(clix))
 
