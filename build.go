@@ -58,6 +58,10 @@ var buildCommand = cli.Command{
 			Usage: "set build arguments",
 			Value: &cli.StringSlice{},
 		},
+		cli.BoolFlag{
+			Name:  "http,i",
+			Usage: "push over http",
+		},
 	},
 	Action: func(clix *cli.Context) error {
 		return build(clix)
@@ -110,6 +114,9 @@ func build(clix *cli.Context) error {
 		solveOpt.ExporterAttrs["name"] = ref
 		if clix.Bool("push") {
 			solveOpt.ExporterAttrs["push"] = "true"
+			if clix.Bool("http") {
+				solveOpt.ExporterAttrs["registry.insecure"] = "true"
+			}
 		}
 	}
 	solveOpt.ExporterOutput, solveOpt.ExporterOutputDir, err = resolveExporterOutput(solveOpt.Exporter, solveOpt.ExporterAttrs["output"])
@@ -119,7 +126,6 @@ func build(clix *cli.Context) error {
 	if solveOpt.ExporterOutput != nil || solveOpt.ExporterOutputDir != "" {
 		delete(solveOpt.ExporterAttrs, "output")
 	}
-	solveOpt.ExportCacheAttrs = map[string]string{"mode": "min"}
 	solveOpt.LocalDirs, err = attrMap(
 		fmt.Sprintf("context=%s", clix.String("context")),
 		fmt.Sprintf("dockerfile=%s", clix.String("dockerfile")),
@@ -203,7 +209,7 @@ func commandContext(c *cli.Context) context.Context {
 }
 
 func resolveClient(c *cli.Context) (*client.Client, error) {
-	opts := []client.ClientOpt{client.WithBlock()}
+	opts := []client.ClientOpt{}
 	ctx := commandContext(c)
 	ctx, cancel := context.WithTimeout(ctx, 5*time.Second)
 	defer cancel()
