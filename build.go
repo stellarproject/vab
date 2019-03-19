@@ -62,6 +62,10 @@ var buildCommand = cli.Command{
 			Name:  "http,i",
 			Usage: "push over http",
 		},
+		cli.BoolFlag{
+			Name:  "detail",
+			Usage: "detailed build output",
+		},
 	},
 	Action: func(clix *cli.Context) error {
 		return build(clix)
@@ -149,8 +153,10 @@ func build(clix *cli.Context) error {
 
 	eg.Go(func() error {
 		var c console.Console
-		if cf, err := console.ConsoleFromFile(os.Stderr); err == nil {
-			c = cf
+		if !clix.Bool("detail") {
+			if cf, err := console.ConsoleFromFile(os.Stderr); err == nil {
+				c = cf
+			}
 		}
 		// not using shared context to not disrupt display but let is finish reporting errors
 		return progressui.DisplaySolveStatus(context.TODO(), "", c, os.Stdout, displayCh)
