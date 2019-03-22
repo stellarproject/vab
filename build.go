@@ -53,9 +53,13 @@ var buildCommand = cli.Command{
 			Name:  "local",
 			Usage: "export the build results to the local directory",
 		},
+		cli.BoolFlag{
+			Name:  "oci",
+			Usage: "export the build results as an OCI image",
+		},
 		cli.StringFlag{
-			Name:  "local-dir",
-			Usage: "local directory to export build results",
+			Name:  "output",
+			Usage: "output directory or file location (used with --local|--oci",
 			Value: ".",
 		},
 		cli.StringSliceFlag{
@@ -114,7 +118,10 @@ func build(clix *cli.Context) error {
 		solveOpt.Exporter = ""
 	case clix.Bool("local"):
 		solveOpt.Exporter = "local"
-		solveOpt.ExporterAttrs["output"] = clix.String("local-dir")
+		solveOpt.ExporterAttrs["output"] = clix.String("output")
+	case clix.Bool("oci"):
+		solveOpt.Exporter = "oci"
+		solveOpt.ExporterAttrs["output"] = clix.String("output")
 	default:
 		ref := clix.String("ref")
 		if ref == "" {

@@ -57,6 +57,7 @@ container assembly builder`
 		return nil
 	}
 	app.Commands = []cli.Command{
+		applyCommand,
 		buildCommand,
 		cronCommand,
 	}
