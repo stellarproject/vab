@@ -6,6 +6,7 @@ import (
 	"encoding/json"
 	"io/ioutil"
 	"os"
+	"os/exec"
 	"path/filepath"
 	"strings"
 
@@ -23,6 +24,8 @@ import (
 	"github.com/urfave/cli"
 )
 
+const postInstallFile = "post-install"
+
 var applyCommand = cli.Command{
 	Name:  "apply",
 	Usage: "apply and image to a destination",
@@ -37,8 +40,23 @@ var applyCommand = cli.Command{
 		if destination == "" {
 			return errors.New("no destination specified")
 		}
-		return applyImage(image, destination)
+		if err := applyImage(image, destination); err != nil {
+			return err
+		}
+		return postInstall(destination)
 	},
+}
+
+func postInstall(dest string) error {
+	path := filepath.Join(dest, postInstallFile)
+	if _, err := os.Stat(path); err != nil {
+		// return nil when no post install file exists
+		return nil
+	}
+	cmd := exec.Command(path)
+	cmd.Stdout = os.Stdout
+	cmd.Stderr = os.Stderr
+	return cmd.Run()
 }
 
 func applyImage(imageName, dest string) error {
