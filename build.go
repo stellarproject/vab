@@ -53,6 +53,11 @@ var buildCommand = cli.Command{
 			Name:  "local",
 			Usage: "export the build results to the local directory",
 		},
+		cli.StringFlag{
+			Name:  "local-dir",
+			Usage: "local directory to export build results",
+			Value: ".",
+		},
 		cli.StringSliceFlag{
 			Name:  "arg,a",
 			Usage: "set build arguments",
@@ -109,7 +114,7 @@ func build(clix *cli.Context) error {
 		solveOpt.Exporter = ""
 	case clix.Bool("local"):
 		solveOpt.Exporter = "local"
-		solveOpt.ExporterAttrs["output"] = "."
+		solveOpt.ExporterAttrs["output"] = clix.String("local-dir")
 	default:
 		ref := clix.String("ref")
 		if ref == "" {
