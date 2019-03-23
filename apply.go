@@ -1,6 +1,7 @@
 package main
 
 import (
+	"archive/tar"
 	"context"
 	"encoding/base64"
 	"encoding/json"
@@ -31,6 +32,10 @@ var applyCommand = cli.Command{
 		cli.BoolFlag{
 			Name:  "no-post",
 			Usage: "don't run post install",
+		},
+		cli.BoolFlag{
+			Name:  "http,i",
+			Usage: "pull over http",
 		},
 	},
 	Action: func(clix *cli.Context) error {
@@ -83,7 +88,7 @@ func applyImage(clix *cli.Context, imageName, dest string) error {
 
 	authorizer := docker.NewAuthorizer(nil, getDockerCredentials)
 	resolver := docker.NewResolver(docker.ResolverOptions{
-		PlainHTTP:  true,
+		PlainHTTP:  clix.Bool("http"),
 		Authorizer: authorizer,
 	})
 	ctx := context.Background()
@@ -121,7 +126,7 @@ func applyImage(clix *cli.Context, imageName, dest string) error {
 		if r.(compression.DecompressReadCloser).GetCompression() == compression.Uncompressed {
 			continue
 		}
-		if _, err := archive.Apply(ctx, dest, r); err != nil {
+		if _, err := archive.Apply(ctx, dest, r, archive.WithFilter(HostFilter)); err != nil {
 			return err
 		}
 	}
@@ -129,6 +134,23 @@ func applyImage(clix *cli.Context, imageName, dest string) error {
 		return nil
 	}
 	return postInstall(config, dest)
+}
+
+const excludedModes = os.ModeDevice | os.ModeCharDevice | os.ModeSocket | os.ModeNamedPipe
+
+func HostFilter(h *tar.Header) (bool, error) {
+	// exclude devices
+	if h.FileInfo().Mode()&excludedModes != 0 {
+		return false, nil
+	}
+	// exclude /run
+	if strings.Contains(h.Name, "/run") {
+		return false, nil
+	}
+	if h.FileInfo().Size() == 0 && h.FileInfo().Mode()&os.ModeSymlink == 0 {
+		return false, nil
+	}
+	return true, nil
 }
 
 // RegistryAuth is the base64 encoded credentials for the registry credentials
