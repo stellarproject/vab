@@ -24,8 +24,6 @@ import (
 	"github.com/urfave/cli"
 )
 
-const postInstallFile = "post-install"
-
 var applyCommand = cli.Command{
 	Name:  "apply",
 	Usage: "apply and image to a destination",
@@ -40,23 +38,20 @@ var applyCommand = cli.Command{
 		if destination == "" {
 			return errors.New("no destination specified")
 		}
-		if err := applyImage(image, destination); err != nil {
-			return err
-		}
-		return postInstall(destination)
+		return applyImage(image, destination)
 	},
 }
 
-func postInstall(dest string) error {
-	path := filepath.Join(dest, postInstallFile)
-	if _, err := os.Stat(path); err != nil {
-		// return nil when no post install file exists
-		return nil
+func postInstall(i *Image, dest string) error {
+	for _, arg := range i.Config.OnBuild {
+		cmd := exec.Command("bash", "-c", arg)
+		cmd.Stdout = os.Stdout
+		cmd.Stderr = os.Stderr
+		if err := cmd.Run(); err != nil {
+			return errors.Wrapf(err, "executing %q", arg)
+		}
 	}
-	cmd := exec.Command(path)
-	cmd.Stdout = os.Stdout
-	cmd.Stderr = os.Stderr
-	return cmd.Run()
+	return nil
 }
 
 func applyImage(imageName, dest string) error {
@@ -102,7 +97,7 @@ func applyImage(imageName, dest string) error {
 		return err
 	}
 
-	layers, err := getLayers(ctx, cs, desc)
+	config, layers, err := getLayers(ctx, cs, desc)
 	if err != nil {
 		return err
 	}
@@ -124,7 +119,7 @@ func applyImage(imageName, dest string) error {
 			return err
 		}
 	}
-	return nil
+	return postInstall(config, dest)
 }
 
 // RegistryAuth is the base64 encoded credentials for the registry credentials
@@ -170,17 +165,30 @@ func getDockerCredentials(host string) (string, string, error) {
 	return "", "", nil
 }
 
-func getLayers(ctx context.Context, cs content.Store, desc v1.Descriptor) ([]rootfs.Layer, error) {
-	manifest, err := images.Manifest(ctx, cs, desc, nil)
+func getConfig(ctx context.Context, provider content.Provider, desc v1.Descriptor) (*Image, error) {
+	p, err := content.ReadBlob(ctx, provider, desc)
 	if err != nil {
 		return nil, err
 	}
-	diffIDs, err := images.RootFS(ctx, cs, manifest.Config)
-	if err != nil {
-		return nil, errors.Wrap(err, "failed to resolve rootfs")
+	var config Image
+	if err := json.Unmarshal(p, &config); err != nil {
+		return nil, err
 	}
+	return &config, nil
+}
+
+func getLayers(ctx context.Context, cs content.Store, desc v1.Descriptor) (*Image, []rootfs.Layer, error) {
+	manifest, err := images.Manifest(ctx, cs, desc, nil)
+	if err != nil {
+		return nil, nil, err
+	}
+	config, err := getConfig(ctx, cs, manifest.Config)
+	if err != nil {
+		return nil, nil, errors.Wrap(err, "failed to resolve config")
+	}
+	diffIDs := config.RootFS.DiffIDs
 	if len(diffIDs) != len(manifest.Layers) {
-		return nil, errors.Errorf("mismatched image rootfs and manifest layers")
+		return nil, nil, errors.Errorf("mismatched image rootfs and manifest layers")
 	}
 	layers := make([]rootfs.Layer, len(diffIDs))
 	for i := range diffIDs {
@@ -191,5 +199,5 @@ func getLayers(ctx context.Context, cs content.Store, desc v1.Descriptor) ([]roo
 		}
 		layers[i].Blob = manifest.Layers[i]
 	}
-	return layers, nil
+	return config, layers, nil
 }
