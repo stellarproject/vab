@@ -27,6 +27,12 @@ import (
 var applyCommand = cli.Command{
 	Name:  "apply",
 	Usage: "apply and image to a destination",
+	Flags: []cli.Flag{
+		cli.BoolFlag{
+			Name:  "no-post",
+			Usage: "don't run post install",
+		},
+	},
 	Action: func(clix *cli.Context) error {
 		var (
 			image       = clix.Args().First()
@@ -38,7 +44,7 @@ var applyCommand = cli.Command{
 		if destination == "" {
 			return errors.New("no destination specified")
 		}
-		return applyImage(image, destination)
+		return applyImage(clix, image, destination)
 	},
 }
 
@@ -54,7 +60,7 @@ func postInstall(i *Image, dest string) error {
 	return nil
 }
 
-func applyImage(imageName, dest string) error {
+func applyImage(clix *cli.Context, imageName, dest string) error {
 	if _, err := os.Stat(dest); err != nil {
 		if !os.IsNotExist(err) {
 			return err
@@ -118,6 +124,9 @@ func applyImage(imageName, dest string) error {
 		if _, err := archive.Apply(ctx, dest, r); err != nil {
 			return err
 		}
+	}
+	if clix.Bool("no-post") {
+		return nil
 	}
 	return postInstall(config, dest)
 }
@@ -190,14 +199,28 @@ func getLayers(ctx context.Context, cs content.Store, desc v1.Descriptor) (*Imag
 	if len(diffIDs) != len(manifest.Layers) {
 		return nil, nil, errors.Errorf("mismatched image rootfs and manifest layers")
 	}
-	layers := make([]rootfs.Layer, len(diffIDs))
+	var (
+		layers       []rootfs.Layer
+		historyIndex int
+	)
 	for i := range diffIDs {
-		layers[i].Diff = v1.Descriptor{
+		if config.History[historyIndex].EmptyLayer {
+			historyIndex++
+		}
+		// TODO: find a better way to remove the base image data
+		if config.History[historyIndex].Comment != "buildkit.dockerfile.v0" {
+			historyIndex++
+			continue
+		}
+		var l rootfs.Layer
+		l.Diff = v1.Descriptor{
 			// TODO: derive media type from compressed type
 			MediaType: v1.MediaTypeImageLayer,
 			Digest:    diffIDs[i],
 		}
-		layers[i].Blob = manifest.Layers[i]
+		l.Blob = manifest.Layers[i]
+		layers = append(layers, l)
+		historyIndex++
 	}
 	return config, layers, nil
 }
