@@ -11,7 +11,6 @@ import (
 	"path/filepath"
 	"strings"
 
-	"github.com/Sirupsen/logrus"
 	"github.com/containerd/containerd/archive"
 	"github.com/containerd/containerd/archive/compression"
 	"github.com/containerd/containerd/content"
@@ -22,6 +21,7 @@ import (
 	"github.com/containerd/containerd/rootfs"
 	v1 "github.com/opencontainers/image-spec/specs-go/v1"
 	"github.com/pkg/errors"
+	"github.com/sirupsen/logrus"
 	"github.com/urfave/cli"
 )
 
@@ -54,7 +54,9 @@ var applyCommand = cli.Command{
 }
 
 func postInstall(i *Image, dest string) error {
+	logrus.Info("running post install commands")
 	for _, arg := range i.Config.OnBuild {
+		logrus.WithField("command", arg).Debug("executing command")
 		cmd := exec.Command("bash", "-c", arg)
 		cmd.Stdout = os.Stdout
 		cmd.Stderr = os.Stderr
@@ -70,7 +72,6 @@ func applyImage(clix *cli.Context, imageName, dest string) error {
 		if !os.IsNotExist(err) {
 			return err
 		}
-
 		if err := os.MkdirAll(dest, 0755); err != nil {
 			return err
 		}
@@ -92,7 +93,6 @@ func applyImage(clix *cli.Context, imageName, dest string) error {
 		Authorizer: authorizer,
 	})
 	ctx := context.Background()
-
 	name, desc, err := resolver.Resolve(ctx, imageName)
 	if err != nil {
 		return err
@@ -101,13 +101,11 @@ func applyImage(clix *cli.Context, imageName, dest string) error {
 	if err != nil {
 		return err
 	}
-
 	childrenHandler := images.ChildrenHandler(cs)
 	h := images.Handlers(remotes.FetchHandler(cs, fetcher), childrenHandler)
 	if err := images.Dispatch(ctx, h, nil, desc); err != nil {
 		return err
 	}
-
 	config, layers, err := getLayers(ctx, cs, desc)
 	if err != nil {
 		return err
