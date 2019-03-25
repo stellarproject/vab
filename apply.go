@@ -110,6 +110,7 @@ func applyImage(clix *cli.Context, imageName, dest string) error {
 	if err != nil {
 		return err
 	}
+	logrus.Infof("unpacking image to %q", dest)
 	for _, layer := range layers {
 		ra, err := cs.ReaderAt(ctx, layer.Blob)
 		if err != nil {
@@ -124,6 +125,7 @@ func applyImage(clix *cli.Context, imageName, dest string) error {
 		if r.(compression.DecompressReadCloser).GetCompression() == compression.Uncompressed {
 			continue
 		}
+		logrus.WithField("layer", layer.Blob.Digest).Info("apply layer")
 		if _, err := archive.Apply(ctx, dest, r, archive.WithFilter(HostFilter)); err != nil {
 			return err
 		}
@@ -142,7 +144,8 @@ func HostFilter(h *tar.Header) (bool, error) {
 		return false, nil
 	}
 	// exclude /run
-	if strings.Contains(h.Name, "/run") {
+	parts := strings.Split(h.Name, "/")
+	if len(parts) > 0 && parts[0] == "/run" {
 		return false, nil
 	}
 	if h.FileInfo().Size() == 0 && h.FileInfo().Mode()&os.ModeSymlink == 0 {
