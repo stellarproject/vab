@@ -75,18 +75,14 @@ var buildCommand = cli.Command{
 			Name:  "detail",
 			Usage: "detailed build output",
 		},
+		cli.BoolFlag{
+			Name:  "no-cache",
+			Usage: "do not use the cache",
+		},
 	},
 	Action: func(clix *cli.Context) error {
 		return build(clix)
 	},
-}
-
-func read(r io.Reader, clix *cli.Context) (*llb.Definition, error) {
-	def, err := llb.ReadFrom(r)
-	if err != nil {
-		return nil, errors.Wrap(err, "failed to parse input")
-	}
-	return def, nil
 }
 
 func build(clix *cli.Context) error {
@@ -105,6 +101,9 @@ func build(clix *cli.Context) error {
 			return errors.Errorf("invalid build-arg value %s", a)
 		}
 		atters["build-arg:"+kv[0]] = kv[1]
+	}
+	if clix.Bool("no-cache") {
+		atters["no-cache"] = ""
 	}
 	solveOpt := client.SolveOpt{
 		Exporter:      "image",
