@@ -5,6 +5,7 @@ import (
 	"context"
 	"encoding/base64"
 	"encoding/json"
+	"fmt"
 	"io/ioutil"
 	"os"
 	"os/exec"
@@ -42,6 +43,10 @@ var applyCommand = cli.Command{
 			Name:  "device",
 			Usage: "unpack to the device",
 		},
+		cli.BoolFlag{
+			Name:  "boot",
+			Usage: "install the kernel and initrd from the image",
+		},
 	},
 	Action: func(clix *cli.Context) error {
 		var (
@@ -74,7 +79,7 @@ var applyCommand = cli.Command{
 func postInstall(i *Image, dest string) error {
 	logrus.Info("running post install commands")
 	for _, arg := range i.Config.OnBuild {
-		logrus.WithField("command", arg).Debug("executing command")
+		logrus.WithField("command", arg).Info("executing command")
 		cmd := exec.Command("bash", "-c", arg)
 		cmd.Stdout = os.Stdout
 		cmd.Stderr = os.Stderr
@@ -98,7 +103,13 @@ func applyImage(clix *cli.Context, imageName, dest string) error {
 	if err != nil {
 		return err
 	}
-	defer os.RemoveAll(tmpContent)
+	defer func() {
+		if err := os.RemoveAll(tmpContent); err != nil {
+			logrus.WithError(err).Errorf("removing content store at %s", tmpContent)
+			return
+		}
+		logrus.Infof("removing content store at %s", tmpContent)
+	}()
 
 	logrus.Infof("created content store at %s", tmpContent)
 	cs, err := local.NewStore(tmpContent)
@@ -149,6 +160,13 @@ func applyImage(clix *cli.Context, imageName, dest string) error {
 		if _, err := archive.Apply(ctx, dest, r, archive.WithFilter(HostFilter)); err != nil {
 			return err
 		}
+	}
+	if clix.Bool("boot") {
+		config.Config.OnBuild = append([]string{
+			fmt.Sprintf("cp %s/* /boot/", filepath.Join(dest, "boot")),
+		},
+			config.Config.OnBuild...,
+		)
 	}
 	if clix.Bool("no-post") {
 		return nil
