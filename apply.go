@@ -164,6 +164,7 @@ func applyImage(clix *cli.Context, imageName, dest string) error {
 	if clix.Bool("boot") {
 		config.Config.OnBuild = append([]string{
 			fmt.Sprintf("cp %s/* /boot/", filepath.Join(dest, "boot")),
+			fmt.Sprintf("cp %s /etc/default/", filepath.Join(dest, "etc/default/grub")),
 		},
 			config.Config.OnBuild...,
 		)
