@@ -10,6 +10,7 @@ import (
 	"os/exec"
 	"path/filepath"
 	"strings"
+	"syscall"
 
 	"github.com/containerd/containerd/archive"
 	"github.com/containerd/containerd/archive/compression"
@@ -37,6 +38,10 @@ var applyCommand = cli.Command{
 			Name:  "http,i",
 			Usage: "pull over http",
 		},
+		cli.StringFlag{
+			Name:  "device",
+			Usage: "unpack to the device",
+		},
 	},
 	Action: func(clix *cli.Context) error {
 		var (
@@ -48,6 +53,19 @@ var applyCommand = cli.Command{
 		}
 		if destination == "" {
 			return errors.New("no destination specified")
+		}
+		device := clix.String("device")
+		if device != "" {
+			tmpMount, err := ioutil.TempDir("", "vab-device-")
+			if err != nil {
+				return err
+			}
+			defer os.RemoveAll(tmpMount)
+			if err := syscall.Mount(device, tmpMount, "ext4", 0, ""); err != nil {
+				return err
+			}
+			defer syscall.Unmount(tmpMount, 0)
+			destination = filepath.Join(tmpMount, destination)
 		}
 		return applyImage(clix, image, destination)
 	},
@@ -82,6 +100,7 @@ func applyImage(clix *cli.Context, imageName, dest string) error {
 	}
 	defer os.RemoveAll(tmpContent)
 
+	logrus.Infof("created content store at %s", tmpContent)
 	cs, err := local.NewStore(tmpContent)
 	if err != nil {
 		return err
@@ -101,6 +120,7 @@ func applyImage(clix *cli.Context, imageName, dest string) error {
 	if err != nil {
 		return err
 	}
+	logrus.Info("fetching system image")
 	childrenHandler := images.ChildrenHandler(cs)
 	h := images.Handlers(remotes.FetchHandler(cs, fetcher), childrenHandler)
 	if err := images.Dispatch(ctx, h, nil, desc); err != nil {
@@ -146,9 +166,6 @@ func HostFilter(h *tar.Header) (bool, error) {
 	// exclude /run
 	parts := strings.Split(h.Name, "/")
 	if len(parts) > 0 && parts[0] == "/run" {
-		return false, nil
-	}
-	if h.FileInfo().Size() == 0 && h.FileInfo().Mode()&os.ModeSymlink == 0 {
 		return false, nil
 	}
 	return true, nil

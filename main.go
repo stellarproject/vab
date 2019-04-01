@@ -11,7 +11,7 @@ import (
 func main() {
 	app := cli.NewApp()
 	app.Name = "vab"
-	app.Version = "2"
+	app.Version = "3"
 	app.Usage = "container assembly builder"
 	app.Description = `
         _..-.._
