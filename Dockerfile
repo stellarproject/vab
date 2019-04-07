@@ -1,6 +1,4 @@
-FROM golang:1.10.3-alpine3.8 as builder
-
-RUN apk add --no-cache git alpine-sdk make
+FROM golang:1.12 as builder
 
 ADD . /go/src/github.com/stellarproject/vab
 WORKDIR /go/src/github.com/stellarproject/vab
