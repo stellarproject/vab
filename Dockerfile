@@ -7,4 +7,4 @@ RUN make
 
 FROM scratch
 
-COPY --from=builder /go/src/github.com/stellarproject/vab/vab /bin/vab
+COPY --from=builder /go/src/github.com/stellarproject/vab/vab /usr/local/bin/
