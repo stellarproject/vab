@@ -129,7 +129,7 @@ func build(clix *cli.Context) error {
 		solveOpt.ExporterAttrs["name"] = ref
 		if clix.Bool("push") {
 			solveOpt.ExporterAttrs["push"] = "true"
-			if clix.Bool("http") {
+			if clix.Bool("http") || strings.Contains(ref, "127.0.0.1") {
 				solveOpt.ExporterAttrs["registry.insecure"] = "true"
 			}
 		}
