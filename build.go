@@ -78,7 +78,7 @@ var buildCommand = cli.Command{
 		},
 		cli.StringSliceFlag{
 			Name:  "cache-from",
-			Usage: "external cache source",
+			Usage: "external cache source (eg. user/app:cache, type=local,dest=path/to/dir)",
 		},
 		cli.StringSliceFlag{
 			Name:  "cache-to",
@@ -86,7 +86,7 @@ var buildCommand = cli.Command{
 		},
 		cli.BoolFlag{
 			Name:  "no-cache",
-			Usage: "do not use the cache (eg. user/app:cache, type=local,dest=path/to/dir)",
+			Usage: "do not use the cache",
 		},
 	},
 	Action: func(clix *cli.Context) error {
