@@ -3,6 +3,7 @@ package main
 
 import (
 	"context"
+	"encoding/csv"
 	"fmt"
 	"io"
 	"net"
@@ -75,9 +76,17 @@ var buildCommand = cli.Command{
 			Name:  "detail",
 			Usage: "detailed build output",
 		},
+		cli.StringSliceFlag{
+			Name:  "cache-from",
+			Usage: "external cache source",
+		},
+		cli.StringSliceFlag{
+			Name:  "cache-to",
+			Usage: "export cache location (eg. user/app:cache, type=local,dest=path/to/dir)",
+		},
 		cli.BoolFlag{
 			Name:  "no-cache",
-			Usage: "do not use the cache",
+			Usage: "do not use the cache (eg. user/app:cache, type=local,dest=path/to/dir)",
 		},
 	},
 	Action: func(clix *cli.Context) error {
@@ -112,6 +121,16 @@ func build(clix *cli.Context) error {
 		FrontendAttrs: atters,
 		Session:       []session.Attachable{authprovider.NewDockerAuthProvider()},
 	}
+	cacheImports, err := parseCacheEntry(clix.StringSlice("cache-from"))
+	if err != nil {
+		return err
+	}
+	cacheExports, err := parseCacheEntry(clix.StringSlice("cache-to"))
+	if err != nil {
+		return err
+	}
+	solveOpt.CacheImports = cacheImports
+	solveOpt.CacheExports = cacheExports
 	switch {
 	case clix.Bool("dry"):
 		solveOpt.Exporter = ""
@@ -241,4 +260,56 @@ func buildkitProto(s string) string {
 		return fmt.Sprintf("tcp://%s", s)
 	}
 	return fmt.Sprintf("unix://%s", s)
+}
+
+// vendored from https://github.com/docker/buildx/blob/master/build/cache.go
+func parseCacheEntry(in []string) ([]client.CacheOptionsEntry, error) {
+	imports := make([]client.CacheOptionsEntry, 0, len(in))
+	for _, in := range in {
+		csvReader := csv.NewReader(strings.NewReader(in))
+		fields, err := csvReader.Read()
+		if err != nil {
+			return nil, err
+		}
+		if isRefOnlyFormat(fields) {
+			for _, field := range fields {
+				imports = append(imports, client.CacheOptionsEntry{
+					Type:  "registry",
+					Attrs: map[string]string{"ref": field},
+				})
+			}
+			continue
+		}
+		im := client.CacheOptionsEntry{
+			Attrs: map[string]string{},
+		}
+		for _, field := range fields {
+			parts := strings.SplitN(field, "=", 2)
+			if len(parts) != 2 {
+				return nil, errors.Errorf("invalid value %s", field)
+			}
+			key := strings.ToLower(parts[0])
+			value := parts[1]
+			switch key {
+			case "type":
+				im.Type = value
+			default:
+				im.Attrs[key] = value
+			}
+		}
+		if im.Type == "" {
+			return nil, errors.Errorf("type required form> %q", in)
+		}
+		imports = append(imports, im)
+	}
+	return imports, nil
+}
+
+func isRefOnlyFormat(in []string) bool {
+	for _, v := range in {
+		if strings.Contains(v, "=") {
+			return false
+		}
+	}
+	return true
 }
