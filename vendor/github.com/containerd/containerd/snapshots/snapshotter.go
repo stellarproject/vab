@@ -86,10 +86,15 @@ func (k *Kind) UnmarshalJSON(b []byte) error {
 // Info provides information about a particular snapshot.
 // JSON marshallability is supported for interactive with tools like ctr,
 type Info struct {
-	Kind    Kind              // active or committed snapshot
-	Name    string            // name or key of snapshot
-	Parent  string            `json:",omitempty"` // name of parent snapshot
-	Labels  map[string]string `json:",omitempty"` // Labels for snapshot
+	Kind   Kind   // active or committed snapshot
+	Name   string // name or key of snapshot
+	Parent string `json:",omitempty"` // name of parent snapshot
+
+	// Labels for a snapshot.
+	//
+	// Note: only labels prefixed with `containerd.io/snapshot/` will be inherited by the
+	// snapshotter's `Prepare`, `View`, or `Commit` calls.
+	Labels  map[string]string `json:",omitempty"`
 	Created time.Time         `json:",omitempty"` // Created time
 	Updated time.Time         `json:",omitempty"` // Last update time
 }
@@ -112,6 +117,9 @@ func (u *Usage) Add(other Usage) {
 	// snapshot are roughly unique to it. Don't trust this assumption.
 	u.Inodes += other.Inodes
 }
+
+// WalkFunc defines the callback for a snapshot walk.
+type WalkFunc func(context.Context, Info) error
 
 // Snapshotter defines the methods required to implement a snapshot snapshotter for
 // allocating, snapshotting and mounting filesystem changesets. The model works
@@ -309,9 +317,15 @@ type Snapshotter interface {
 	// removed before proceeding.
 	Remove(ctx context.Context, key string) error
 
-	// Walk all snapshots in the snapshotter. For each snapshot in the
-	// snapshotter, the function will be called.
-	Walk(ctx context.Context, fn func(context.Context, Info) error) error
+	// Walk will call the provided function for each snapshot in the
+	// snapshotter which match the provided filters. If no filters are
+	// given all items will be walked.
+	// Filters:
+	//  name
+	//  parent
+	//  kind (active,view,committed)
+	//  labels.(label)
+	Walk(ctx context.Context, fn WalkFunc, filters ...string) error
 
 	// Close releases the internal resources.
 	//

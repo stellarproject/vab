@@ -30,18 +30,24 @@ import (
 )
 
 type SolveOpt struct {
-	Exporter            string
-	ExporterAttrs       map[string]string
-	ExporterOutput      io.WriteCloser // for ExporterOCI and ExporterDocker
-	ExporterOutputDir   string         // for ExporterLocal
-	LocalDirs           map[string]string
-	SharedKey           string
-	Frontend            string
-	FrontendAttrs       map[string]string
-	CacheExports        []CacheOptionsEntry
-	CacheImports        []CacheOptionsEntry
-	Session             []session.Attachable
-	AllowedEntitlements []entitlements.Entitlement
+	Exports               []ExportEntry
+	LocalDirs             map[string]string
+	SharedKey             string
+	Frontend              string
+	FrontendAttrs         map[string]string
+	CacheExports          []CacheOptionsEntry
+	CacheImports          []CacheOptionsEntry
+	Session               []session.Attachable
+	AllowedEntitlements   []entitlements.Entitlement
+	SharedSession         *session.Session // TODO: refactor to better session syncing
+	SessionPreInitialized bool             // TODO: refactor to better session syncing
+}
+
+type ExportEntry struct {
+	Type      string
+	Attrs     map[string]string
+	Output    func(map[string]string) (io.WriteCloser, error) // for ExporterOCI and ExporterDocker
+	OutputDir string                                          // for ExporterLocal
 }
 
 type CacheOptionsEntry struct {
@@ -90,42 +96,15 @@ func (c *Client) solve(ctx context.Context, def *llb.Definition, runGateway runG
 		statusContext = opentracing.ContextWithSpan(statusContext, span)
 	}
 
-	s, err := session.NewSession(statusContext, defaultSessionName(), opt.SharedKey)
-	if err != nil {
-		return nil, errors.Wrap(err, "failed to create session")
-	}
+	s := opt.SharedSession
 
-	if len(syncedDirs) > 0 {
-		s.Allow(filesync.NewFSSyncProvider(syncedDirs))
-	}
-
-	for _, a := range opt.Session {
-		s.Allow(a)
-	}
-
-	switch opt.Exporter {
-	case ExporterLocal:
-		if opt.ExporterOutput != nil {
-			return nil, errors.New("output file writer is not supported by local exporter")
+	if s == nil {
+		if opt.SessionPreInitialized {
+			return nil, errors.Errorf("no session provided for preinitialized option")
 		}
-		if opt.ExporterOutputDir == "" {
-			return nil, errors.New("output directory is required for local exporter")
-		}
-		s.Allow(filesync.NewFSSyncTargetDir(opt.ExporterOutputDir))
-	case ExporterOCI, ExporterDocker:
-		if opt.ExporterOutputDir != "" {
-			return nil, errors.Errorf("output directory %s is not supported by %s exporter", opt.ExporterOutputDir, opt.Exporter)
-		}
-		if opt.ExporterOutput == nil {
-			return nil, errors.Errorf("output file writer is required for %s exporter", opt.Exporter)
-		}
-		s.Allow(filesync.NewFSSyncTarget(opt.ExporterOutput))
-	default:
-		if opt.ExporterOutput != nil {
-			return nil, errors.Errorf("output file writer is not supported by %s exporter", opt.Exporter)
-		}
-		if opt.ExporterOutputDir != "" {
-			return nil, errors.Errorf("output directory %s is not supported by %s exporter", opt.ExporterOutputDir, opt.Exporter)
+		s, err = session.NewSession(statusContext, defaultSessionName(), opt.SharedKey)
+		if err != nil {
+			return nil, errors.Wrap(err, "failed to create session")
 		}
 	}
 
@@ -133,16 +112,63 @@ func (c *Client) solve(ctx context.Context, def *llb.Definition, runGateway runG
 	if err != nil {
 		return nil, err
 	}
-	if len(cacheOpt.contentStores) > 0 {
-		s.Allow(sessioncontent.NewAttachable(cacheOpt.contentStores))
+
+	var ex ExportEntry
+
+	if !opt.SessionPreInitialized {
+		if len(syncedDirs) > 0 {
+			s.Allow(filesync.NewFSSyncProvider(syncedDirs))
+		}
+
+		for _, a := range opt.Session {
+			s.Allow(a)
+		}
+
+		if len(opt.Exports) > 1 {
+			return nil, errors.New("currently only single Exports can be specified")
+		}
+		if len(opt.Exports) == 1 {
+			ex = opt.Exports[0]
+		}
+
+		switch ex.Type {
+		case ExporterLocal:
+			if ex.Output != nil {
+				return nil, errors.New("output file writer is not supported by local exporter")
+			}
+			if ex.OutputDir == "" {
+				return nil, errors.New("output directory is required for local exporter")
+			}
+			s.Allow(filesync.NewFSSyncTargetDir(ex.OutputDir))
+		case ExporterOCI, ExporterDocker, ExporterTar:
+			if ex.OutputDir != "" {
+				return nil, errors.Errorf("output directory %s is not supported by %s exporter", ex.OutputDir, ex.Type)
+			}
+			if ex.Output == nil {
+				return nil, errors.Errorf("output file writer is required for %s exporter", ex.Type)
+			}
+			s.Allow(filesync.NewFSSyncTarget(ex.Output))
+		default:
+			if ex.Output != nil {
+				return nil, errors.Errorf("output file writer is not supported by %s exporter", ex.Type)
+			}
+			if ex.OutputDir != "" {
+				return nil, errors.Errorf("output directory %s is not supported by %s exporter", ex.OutputDir, ex.Type)
+			}
+		}
+
+		if len(cacheOpt.contentStores) > 0 {
+			s.Allow(sessioncontent.NewAttachable(cacheOpt.contentStores))
+		}
+
+		eg.Go(func() error {
+			return s.Run(statusContext, grpchijack.Dialer(c.controlClient()))
+		})
 	}
+
 	for k, v := range cacheOpt.frontendAttrs {
 		opt.FrontendAttrs[k] = v
 	}
-
-	eg.Go(func() error {
-		return s.Run(statusContext, grpchijack.Dialer(c.controlClient()))
-	})
 
 	solveCtx, cancelSolve := context.WithCancel(ctx)
 	var res *SolveResponse
@@ -165,8 +191,8 @@ func (c *Client) solve(ctx context.Context, def *llb.Definition, runGateway runG
 		resp, err := c.controlClient().Solve(ctx, &controlapi.SolveRequest{
 			Ref:           ref,
 			Definition:    pbd,
-			Exporter:      opt.Exporter,
-			ExporterAttrs: opt.ExporterAttrs,
+			Exporter:      ex.Type,
+			ExporterAttrs: ex.Attrs,
 			Session:       s.ID(),
 			Frontend:      opt.Frontend,
 			FrontendAttrs: opt.FrontendAttrs,
@@ -286,7 +312,7 @@ func prepareSyncedDirs(def *llb.Definition, localDirs map[string]string) ([]file
 			return nil, errors.Errorf("%s not a directory", d)
 		}
 	}
-	resetUIDAndGID := func(st *fstypes.Stat) bool {
+	resetUIDAndGID := func(p string, st *fstypes.Stat) bool {
 		st.Uid = 0
 		st.Gid = 0
 		return true
@@ -338,18 +364,18 @@ func parseCacheOptions(opt SolveOpt) (*cacheOptions, error) {
 		cacheExports []*controlapi.CacheOptionsEntry
 		cacheImports []*controlapi.CacheOptionsEntry
 		// legacy API is used for registry caches, because the daemon might not support the new API
-		legacyExportRef   string
-		legacyExportAttrs map[string]string
-		legacyImportRefs  []string
+		legacyExportRef  string
+		legacyImportRefs []string
 	)
 	contentStores := make(map[string]content.Store)
 	indicesToUpdate := make(map[string]string) // key: index.JSON file name, value: tag
 	frontendAttrs := make(map[string]string)
+	legacyExportAttrs := make(map[string]string)
 	for _, ex := range opt.CacheExports {
 		if ex.Type == "local" {
-			csDir := ex.Attrs["store"]
+			csDir := ex.Attrs["dest"]
 			if csDir == "" {
-				return nil, errors.New("local cache exporter requires store")
+				return nil, errors.New("local cache exporter requires dest")
 			}
 			if err := os.MkdirAll(csDir, 0755); err != nil {
 				return nil, err
@@ -380,12 +406,9 @@ func parseCacheOptions(opt SolveOpt) (*cacheOptions, error) {
 	for _, im := range opt.CacheImports {
 		attrs := im.Attrs
 		if im.Type == "local" {
-			csDir := im.Attrs["store"]
+			csDir := im.Attrs["src"]
 			if csDir == "" {
-				return nil, errors.New("local cache importer requires store")
-			}
-			if err := os.MkdirAll(csDir, 0755); err != nil {
-				return nil, err
+				return nil, errors.New("local cache importer requires src")
 			}
 			cs, err := contentlocal.NewStore(csDir)
 			if err != nil {

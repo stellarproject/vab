@@ -115,11 +115,9 @@ func build(clix *cli.Context) error {
 		atters["no-cache"] = ""
 	}
 	solveOpt := client.SolveOpt{
-		Exporter:      "image",
-		ExporterAttrs: make(map[string]string),
 		Frontend:      "dockerfile.v0",
 		FrontendAttrs: atters,
-		Session:       []session.Attachable{authprovider.NewDockerAuthProvider()},
+		Session:       []session.Attachable{authprovider.NewDockerAuthProvider(os.Stderr)},
 	}
 	cacheImports, err := parseCacheEntry(clix.StringSlice("cache-from"))
 	if err != nil {
@@ -131,35 +129,48 @@ func build(clix *cli.Context) error {
 	}
 	solveOpt.CacheImports = cacheImports
 	solveOpt.CacheExports = cacheExports
+
+	exportEntry := client.ExportEntry{
+		Type:  "image",
+		Attrs: map[string]string{},
+	}
 	switch {
 	case clix.Bool("dry"):
-		solveOpt.Exporter = ""
 	case clix.Bool("local"):
-		solveOpt.Exporter = "local"
-		solveOpt.ExporterAttrs["output"] = clix.String("output")
+		exportEntry.Type = "local"
+		exportEntry.Attrs["output"] = clix.String("output")
 	case clix.Bool("oci"):
-		solveOpt.Exporter = "oci"
-		solveOpt.ExporterAttrs["output"] = clix.String("output")
+		exportEntry.Type = "oci"
+		exportEntry.Attrs["output"] = clix.String("output")
 	default:
 		ref := clix.String("ref")
 		if ref == "" {
 			return errors.New("ref is required when exporting image")
 		}
-		solveOpt.ExporterAttrs["name"] = ref
+		exportEntry.Attrs["name"] = ref
 		if clix.Bool("push") {
-			solveOpt.ExporterAttrs["push"] = "true"
+			exportEntry.Attrs["push"] = "true"
 			if clix.Bool("http") || strings.Contains(ref, "127.0.0.1") {
-				solveOpt.ExporterAttrs["registry.insecure"] = "true"
+				exportEntry.Attrs["registry.insecure"] = "true"
 			}
 		}
 	}
-	solveOpt.ExporterOutput, solveOpt.ExporterOutputDir, err = resolveExporterOutput(solveOpt.Exporter, solveOpt.ExporterAttrs["output"])
+	wc, dir, err := resolveExporterOutput(exportEntry.Type, exportEntry.Attrs["output"])
 	if err != nil {
 		return errors.Wrap(err, "invalid exporter-opt: output")
 	}
-	if solveOpt.ExporterOutput != nil || solveOpt.ExporterOutputDir != "" {
-		delete(solveOpt.ExporterAttrs, "output")
+	if wc != nil {
+		exportEntry.Output = func(attrs map[string]string) (io.WriteCloser, error) {
+			return wc, nil
+		}
 	}
+	if dir != "" {
+		exportEntry.OutputDir = dir
+	}
+	if exportEntry.Output != nil || exportEntry.OutputDir != "" {
+		delete(exportEntry.Attrs, "output")
+	}
+	solveOpt.Exports = []client.ExportEntry{exportEntry}
 	solveOpt.LocalDirs, err = attrMap(
 		fmt.Sprintf("context=%s", clix.String("context")),
 		fmt.Sprintf("dockerfile=%s", clix.String("dockerfile")),

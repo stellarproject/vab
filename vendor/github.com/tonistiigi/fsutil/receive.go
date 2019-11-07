@@ -92,7 +92,13 @@ func (w *dynamicWalker) fill(ctx context.Context, pathC chan<- *currentPath) err
 			if !ok {
 				return nil
 			}
-			pathC <- p
+			select {
+			case pathC <- p:
+			case <-ctx.Done():
+				w.err = ctx.Err()
+				close(w.closeCh)
+				return ctx.Err()
+			}
 		case <-ctx.Done():
 			w.err = ctx.Err()
 			close(w.closeCh)
@@ -127,7 +133,7 @@ func (r *receiver) run(ctx context.Context) error {
 		if !r.merge {
 			destWalker = GetWalkerFn(r.dest)
 		}
-		err := doubleWalkDiff(ctx, dw.HandleChange, destWalker, w.fill)
+		err := doubleWalkDiff(ctx, dw.HandleChange, destWalker, w.fill, r.filter)
 		if err != nil {
 			return err
 		}
@@ -174,11 +180,11 @@ func (r *receiver) run(ctx context.Context) error {
 					r.mu.Unlock()
 				}
 				i++
-				cp := &currentPath{path: p.Stat.Path, f: &StatInfo{p.Stat}}
-				if err := r.orderValidator.HandleChange(ChangeKindAdd, cp.path, cp.f, nil); err != nil {
+				cp := &currentPath{path: p.Stat.Path, stat: p.Stat}
+				if err := r.orderValidator.HandleChange(ChangeKindAdd, cp.path, &StatInfo{cp.stat}, nil); err != nil {
 					return err
 				}
-				if err := r.hlValidator.HandleChange(ChangeKindAdd, cp.path, cp.f, nil); err != nil {
+				if err := r.hlValidator.HandleChange(ChangeKindAdd, cp.path, &StatInfo{cp.stat}, nil); err != nil {
 					return err
 				}
 				if err := w.update(cp); err != nil {
