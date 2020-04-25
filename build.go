@@ -63,6 +63,10 @@ var buildCommand = cli.Command{
 			Usage: "output directory or file location (used with --local|--oci",
 			Value: ".",
 		},
+		cli.StringFlag{
+			Name: "target",
+			Usage: "set target stage to build",
+		},
 		cli.StringSliceFlag{
 			Name:  "arg,a",
 			Usage: "set build arguments",
@@ -113,6 +117,9 @@ func build(clix *cli.Context) error {
 	}
 	if clix.Bool("no-cache") {
 		atters["no-cache"] = ""
+	}
+	if v := clix.String("target"); v != "" {
+		atters["target"] = v
 	}
 	solveOpt := client.SolveOpt{
 		Frontend:      "dockerfile.v0",
